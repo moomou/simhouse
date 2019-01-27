@@ -2,6 +2,7 @@
 using UnityEngine;
 using System.Linq;
 using System.Collections.Generic;
+using System.Collections;
 
 public class RoomGen : MonoBehaviour
 {
@@ -10,28 +11,21 @@ public class RoomGen : MonoBehaviour
     public string RoomType = "bedroom";
     public int ResWidth = 640;
     public int ResHeight = 480;
-    public int MaxItemCount = 20;
+    public int MaxItemCount = 15;
     public int FloorPlan = 2;
-    public int GridN = 12;
-
-    public enum ScreenshotPosition
-    {
-        Top,
-        Middle,
-        Left,
-        Right
-    };
+    public int GridN = 20;
 
     Camera m_MainCamera;
     string generatorConfig;
     IEnumerable<string> allFurns;
     List<GameObject> objs;
     HashSet<Vector2> grid;
+    bool film;
 
-    string OutputLocation(string cameraPosition, string config, bool isGood)
+    string OutputLocation(string dir, string prefix, string config)
     {
-        string dir = System.IO.Path.Combine(OUTPUT_DIR, isGood ? "good" : "bad");
-        string filename = cameraPosition + "_" + config + ".jpg";
+
+        string filename = prefix + "_" + config + ".jpg";
         return System.IO.Path.Combine(dir, filename);
     }
 
@@ -39,8 +33,8 @@ public class RoomGen : MonoBehaviour
     {
         var allAssetPaths = AssetDatabase.GetAllAssetPaths()
              .Where(s => s.EndsWith("fbx", System.StringComparison.Ordinal));
-        // RoomGenUtils.DebugArray(allAssetGuids);
-        return allAssetPaths; // items.OrderBy(x => Random.value).First();
+
+        return allAssetPaths;
     }
 
 
@@ -140,8 +134,6 @@ public class RoomGen : MonoBehaviour
         combinedFloor.GetComponent<MeshFilter>().mesh.CombineMeshes(combine);
         combinedFloor.gameObject.SetActive(true);
 
-        //var combinedSize = combinedFloor.GetComponent<MeshFilter>().mesh.bounds.size;
-        //combinedFloor.transform.position = new Vector3();
         objs.Add(combinedFloor);
         return combinedFloor;
     }
@@ -149,6 +141,9 @@ public class RoomGen : MonoBehaviour
     {
         var floorSize = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
         var wallPath = GetRandomFurnAssetPathByCategory("wall");
+
+        generatorConfig += wallPath;
+
         var wallSize = GetMeshSize(wallPath);
         var walls = new List<GameObject>();
 
@@ -230,27 +225,22 @@ public class RoomGen : MonoBehaviour
         // step 3: door
         // PlaceDoor();
         // step 4: room specific 
-        if (roomType == "bedroom")
+        var roomSize = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+
+        var categories = RoomGenConfig.Room2Category[roomType];
+        var itemCount = (int)(MaxItemCount / 2 + Random.Range(0, MaxItemCount / 2));
+
+        for (int i = 0; i < itemCount; i++)
         {
-            var roomSize = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+            var category = categories.OrderBy(x => Random.value).First();
+            var item = RoomGenConfig.ItemsByCategory[category].OrderBy(x => Random.value).First();
+            var itemPath = GetFurnAssetPath(category, item);
+            var gridPos = NextRoomGridCoord();
+            generatorConfig += category + item + gridPos.ToString();
 
-            var categories = RoomGenConfig.Room2Category[roomType];
-            var itemCount = (int)(MaxItemCount / 2 + Random.Range(0, MaxItemCount / 2));
-
-            for (int i = 0; i < itemCount; i++)
-            {
-                var category = categories.OrderBy(x => Random.value).First();
-                var item = RoomGenConfig.ItemsByCategory[category].OrderBy(x => Random.value).First();
-                var itemPath = GetFurnAssetPath(category, item);
-                var gridPos = NextRoomGridCoord();
-
-                PlaceItem(itemPath, Grid2WorldCoord(roomSize, gridPos));
-            }
+            PlaceItem(itemPath, Grid2WorldCoord(roomSize, gridPos));
         }
-        else
-        {
-            throw new System.NotImplementedException(string.Format("roomType {0} not implemented", roomType));
-        }
+
     }
 
     // Use this for initialization
@@ -260,10 +250,33 @@ public class RoomGen : MonoBehaviour
         allFurns = GetAllFurnitures();
         objs = new List<GameObject>();
         grid = new HashSet<Vector2>();
+        film = false;
+        StartCoroutine(CaptureCoroutine());
 
         Generate(RoomType);
     }
 
+    IEnumerator CaptureCoroutine()
+    {
+        string dir = System.IO.Path.Combine(OUTPUT_DIR, RoomType);
+
+        while (true)
+        {
+            if (film)
+            {
+                var unixTimestamp = System.DateTime.UtcNow.Subtract(new System.DateTime(1970, 1, 1)).TotalMilliseconds;
+                for (int i = 0; i < 1000; i++)
+                {
+                    string outputFilename = OutputLocation(dir, unixTimestamp.ToString(), RoomGenUtils.CreateMD5(generatorConfig));
+                    CaptureScreenShot(outputFilename);
+                    Generate(RoomType);
+                    yield return new WaitForSeconds(.5f);
+                }
+                film = false;
+            }
+            yield return new WaitForSeconds(1);
+        }
+    }
     // Update is called once per frameforeach(string g in allAssetGuids.
     void Update()
     {
@@ -278,16 +291,20 @@ public class RoomGen : MonoBehaviour
         bool jKey = Input.GetKey("j");
         // kKey => bad
         bool kKey = Input.GetKey("k");
+        // gKey => generate 10K images
+        bool gKey = Input.GetKey("g");
 
         if (jKey || kKey)
         {
-            foreach (ScreenshotPosition pos in System.Enum.GetValues(typeof(ScreenshotPosition)))
-            {
-                string outputFilename = OutputLocation(pos.ToString(), RoomGenUtils.CreateMD5(generatorConfig), jKey == true);
-                CaptureScreenShot(outputFilename);
-            }
+            string dir = System.IO.Path.Combine(OUTPUT_DIR, jKey ? "good" : "bad");
+            string outputFilename = OutputLocation(dir, "default", RoomGenUtils.CreateMD5(generatorConfig));
+            CaptureScreenShot(outputFilename);
 
-            // regenerate after screenshot because we don't want repeats
+            Generate(RoomType);
+        }
+        else if (gKey && !film)
+        {
+            film = true;
         }
     }
 }

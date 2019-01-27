@@ -10,7 +10,7 @@ public class RoomGenConfig : MonoBehaviour
         "bed", "deco", "accessory", "chair", "table", "bookcase", "cabinet", "desk",
         }},
         {"bathroom", new string[]{
-        "bathroom", "deco", "bookcase",
+        "bathroom", "deco",
         }},
         {"kitchen", new string[]{
         "kitchen", "table", "bookcase",

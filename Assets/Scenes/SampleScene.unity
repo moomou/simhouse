@@ -189,7 +189,7 @@ GameObject:
   - component: {fileID: 282840813}
   - component: {fileID: 282840811}
   m_Layer: 0
-  m_Name: Main Camera
+  m_Name: MainCamera
   m_TagString: MainCamera
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -302,11 +302,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3d512995ce0094554a4a6c5f60f93046, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  RoomType: bedroom
+  RoomType: bathroom
   ResWidth: 640
   ResHeight: 480
-  MaxItemCount: 12
-  FloorPlan: 4
+  MaxItemCount: 9
+  FloorPlan: 3
   GridN: 12
 --- !u!4 &334683618
 Transform:

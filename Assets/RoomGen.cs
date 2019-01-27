@@ -6,11 +6,11 @@ using System.Collections;
 
 public class RoomGen : MonoBehaviour
 {
-    public const string OUTPUT_DIR = "/Users/moomou/Downloads/interior";
+    public const string OUTPUT_DIR = "~/Downloads/interior";
 
     public string RoomType = "bedroom";
-    public int ResWidth = 640;
-    public int ResHeight = 480;
+    public int ResWidth = 1280;
+    public int ResHeight = 720;
     public int MaxItemCount = 15;
     public int FloorXZSize = 2;
     public int FloorYSize = 1;

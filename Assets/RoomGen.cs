@@ -12,15 +12,19 @@ public class RoomGen : MonoBehaviour
     public int ResWidth = 640;
     public int ResHeight = 480;
     public int MaxItemCount = 15;
-    public int FloorPlan = 2;
+    public int FloorXZSize = 2;
+    public int FloorYSize = 1;
     public int GridN = 20;
 
     Camera m_MainCamera;
     string generatorConfig;
     IEnumerable<string> allFurns;
-    List<GameObject> objs;
-    HashSet<Vector2> grid;
+    Dictionary<int, List<GameObject>> objsByFloor;
+    Dictionary<int, HashSet<Vector2>> gridByFloor;
     bool film;
+
+    float currHeight = 0;
+    float nextHeight = 0;
 
     string OutputLocation(string dir, string prefix, string config)
     {
@@ -74,12 +78,12 @@ public class RoomGen : MonoBehaviour
         return size;
     }
 
-    GameObject PlaceItem(string assetPath, Vector3 position)
+    GameObject PlaceItem(int floor, string assetPath, Vector3 position)
     {
-        return PlaceItem(assetPath, position, Vector3.up, 0);
+        return PlaceItem(floor, assetPath, position, Vector3.up, 0);
     }
 
-    GameObject PlaceItem(string assetPath, Vector3 position, Vector3 rotationAxis, float angle)
+    GameObject PlaceItem(int floor, string assetPath, Vector3 position, Vector3 rotationAxis, float angle)
     {
         var asset = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
         var size = asset.GetComponent<MeshFilter>().sharedMesh.bounds.size;
@@ -90,10 +94,10 @@ public class RoomGen : MonoBehaviour
         obj.transform.RotateAround(obj.transform.position + new Vector3(
             size.x / 2f, size.y / 2f, 0f), Vector3.up, angle);
 
-        objs.Add(obj);
+        objsByFloor[0].Add(obj);
         return obj;
     }
-    GameObject PlaceFloor()
+    GameObject PlaceFloor(int floor, float y)
     {
         var floorPath = GetRandomFurnAssetPathByCategory("floor");
         var floors = new List<GameObject>();
@@ -101,14 +105,14 @@ public class RoomGen : MonoBehaviour
         Debug.Log(string.Format("Single Floor Size {0},{1}", fSize.x, fSize.z));
 
         // place floor boards
-        for (int i = 0; i < FloorPlan; i++)
+        for (int i = 0; i < FloorXZSize; i++)
         {
-            var offsetX = (-fSize.x * FloorPlan / 2 + fSize.x / 2) + i * fSize.x;
-            for (int j = 0; j < FloorPlan; j++)
+            var offsetX = (-fSize.x * FloorXZSize / 2 + fSize.x / 2) + i * fSize.x;
+            for (int j = 0; j < FloorXZSize; j++)
             {
-                var offsetZ = (-fSize.z * FloorPlan / 2 + fSize.z / 2) + j * fSize.z;
+                var offsetZ = (-fSize.z * FloorXZSize / 2 + fSize.z / 2) + j * fSize.z;
                 floors.Add(
-                    PlaceItem(floorPath, new Vector3(offsetX, 0, offsetZ))
+                    PlaceItem(floor, floorPath, new Vector3(offsetX, y, offsetZ))
                 );
             }
         }
@@ -123,7 +127,7 @@ public class RoomGen : MonoBehaviour
         }
 
         var combinedFloor = new GameObject();
-        combinedFloor.transform.position = Vector3.zero;
+        combinedFloor.transform.position = new Vector3(0, 0, 0);
 
         combinedFloor.AddComponent<MeshFilter>();
         combinedFloor.AddComponent<MeshRenderer>();
@@ -134,12 +138,12 @@ public class RoomGen : MonoBehaviour
         combinedFloor.GetComponent<MeshFilter>().mesh.CombineMeshes(combine);
         combinedFloor.gameObject.SetActive(true);
 
-        objs.Add(combinedFloor);
+        objsByFloor[floor].Add(combinedFloor);
         return combinedFloor;
     }
-    List<GameObject> PlaceWall(GameObject floor)
+    List<GameObject> PlaceWall(int floor, GameObject floorObj, float y)
     {
-        var floorSize = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+        var floorSize = floorObj.GetComponent<MeshFilter>().sharedMesh.bounds.size;
         var wallPath = GetRandomFurnAssetPathByCategory("wall");
 
         generatorConfig += wallPath;
@@ -152,17 +156,19 @@ public class RoomGen : MonoBehaviour
         for (int i = 0; i < (int)(floorSize.x / wallSize.x); i++)
         {
             var x = (-floorSize.x / 2 + wallSize.x / 2) + (i) * wallSize.x;
-            walls.Add(PlaceItem(wallPath, new Vector3(x, 0, floorSize.z / 2)));
+            walls.Add(PlaceItem(floor, wallPath, new Vector3(x, y, floorSize.z / 2)));
         }
 
         // left & right
         for (int i = 0; i < (int)(floorSize.z / wallSize.x); i++)
         {
             var z = (-floorSize.z / 2 + wallSize.x / 2) + (i) * wallSize.x;
-            walls.Add(PlaceItem(wallPath, new Vector3(floorSize.x / 2, 0, z), Vector3.up, 90));
-            walls.Add(PlaceItem(wallPath, new Vector3(-floorSize.x / 2, 0, z), Vector3.up, -90));
+            walls.Add(PlaceItem(floor, wallPath, new Vector3(floorSize.x / 2, y, z), Vector3.up, 90));
+            walls.Add(PlaceItem(floor, wallPath, new Vector3(-floorSize.x / 2, y, z), Vector3.up, -90));
         }
 
+        // TODO: this should be factored out
+        nextHeight += wallSize.y;
         return walls;
     }
     void PlaceStair()
@@ -174,8 +180,9 @@ public class RoomGen : MonoBehaviour
 
     }
 
-    Vector2 NextRoomGridCoord()
+    Vector2 NextRoomGridCoord(int floor)
     {
+        var grid = gridByFloor[floor];
         for (int i = 0; i < 3; i++)
         {
             int x = (int)(Random.value * GridN);
@@ -195,37 +202,37 @@ public class RoomGen : MonoBehaviour
 
         throw new System.Exception("BAD");
     }
-    Vector3 Grid2WorldCoord(Vector3 roomSize, Vector2 gridCoord)
+    Vector3 Grid2WorldCoord(Vector3 roomSize, Vector2 gridCoord, float y)
     {
         var x = roomSize.x * (gridCoord.x / (1f * GridN)) - roomSize.x / 2;
         // NOTE - gridCoord.y is is intentional
         var z = roomSize.z * (gridCoord.y / (1f * GridN)) - roomSize.z / 2;
-        return new Vector3(x, 0, z);
+        return new Vector3(x, y, z);
     }
 
-    void Generate(string roomType)
+    void GenerateFloor(int floor, string roomType, float y)
     {
         // Clear everything
-        foreach (var obj in objs)
+        foreach (var obj in objsByFloor[floor])
         {
             Destroy(obj);
         }
         // Clear the array
-        objs.Clear();
+        objsByFloor[floor].Clear();
         // clear grid
-        grid.Clear();
+        gridByFloor[floor].Clear();
 
         // build up our generator_config
         generatorConfig = roomType;
 
         // step 1: floor
-        var floor = PlaceFloor();
+        var floorObj = PlaceFloor(floor, y);
         // step 2: wall
-        PlaceWall(floor);
+        var wallObj = PlaceWall(floor, floorObj, y);
         // step 3: door
         // PlaceDoor();
         // step 4: room specific 
-        var roomSize = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+        var roomSize = floorObj.GetComponent<MeshFilter>().sharedMesh.bounds.size;
 
         var categories = RoomGenConfig.Room2Category[roomType];
         var itemCount = (int)(MaxItemCount / 2 + Random.Range(0, MaxItemCount / 2));
@@ -235,25 +242,45 @@ public class RoomGen : MonoBehaviour
             var category = categories.OrderBy(x => Random.value).First();
             var item = RoomGenConfig.ItemsByCategory[category].OrderBy(x => Random.value).First();
             var itemPath = GetFurnAssetPath(category, item);
-            var gridPos = NextRoomGridCoord();
+            var gridPos = NextRoomGridCoord(floor);
             generatorConfig += category + item + gridPos.ToString();
 
-            PlaceItem(itemPath, Grid2WorldCoord(roomSize, gridPos));
+            PlaceItem(floor, itemPath, Grid2WorldCoord(roomSize, gridPos, y));
         }
 
+        currHeight = nextHeight;
+    }
+
+    void GenerateAllFloor()
+    {
+        currHeight = nextHeight = 0;
+        for (int f = 0; f < FloorYSize; f++)
+        {
+            Debug.Log(string.Format("{0}::{1}", f, nextHeight));
+            GenerateFloor(f, RoomType, currHeight);
+        }
     }
 
     // Use this for initialization
     void Start()
     {
-        m_MainCamera = Camera.main;
-        allFurns = GetAllFurnitures();
-        objs = new List<GameObject>();
-        grid = new HashSet<Vector2>();
+        currHeight = 0;
+        nextHeight = 0;
+
         film = false;
         StartCoroutine(CaptureCoroutine());
 
-        Generate(RoomType);
+        m_MainCamera = Camera.main;
+        allFurns = GetAllFurnitures();
+
+        objsByFloor = new Dictionary<int, List<GameObject>>();
+        gridByFloor = new Dictionary<int, HashSet<Vector2>>();
+        for (int f = 0; f < FloorYSize; f++)
+        {
+            objsByFloor[f] = new List<GameObject>();
+            gridByFloor[f] = new HashSet<Vector2>();
+            GenerateFloor(f, RoomType, currHeight);
+        }
     }
 
     IEnumerator CaptureCoroutine()
@@ -269,7 +296,7 @@ public class RoomGen : MonoBehaviour
                 {
                     string outputFilename = OutputLocation(dir, unixTimestamp.ToString(), RoomGenUtils.CreateMD5(generatorConfig));
                     CaptureScreenShot(outputFilename);
-                    Generate(RoomType);
+                    GenerateAllFloor();
                     yield return new WaitForSeconds(.5f);
                 }
                 film = false;
@@ -283,7 +310,7 @@ public class RoomGen : MonoBehaviour
         if (Input.GetMouseButtonDown(0))
         {
             Debug.Log("MOUSE. Regenerate here.");
-            Generate(RoomType);
+            GenerateAllFloor();
             return;
         }
 
@@ -300,7 +327,7 @@ public class RoomGen : MonoBehaviour
             string outputFilename = OutputLocation(dir, "default", RoomGenUtils.CreateMD5(generatorConfig));
             CaptureScreenShot(outputFilename);
 
-            Generate(RoomType);
+            GenerateAllFloor();
         }
         else if (gKey && !film)
         {

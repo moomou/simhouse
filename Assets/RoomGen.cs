@@ -10,7 +10,9 @@ public class RoomGen : MonoBehaviour
     public string RoomType = "bedroom";
     public int ResWidth = 640;
     public int ResHeight = 480;
-    public int MaxItemCount = 12;
+    public int MaxItemCount = 20;
+    public int FloorPlan = 2;
+    public int GridN = 12;
 
     public enum ScreenshotPosition
     {
@@ -38,14 +40,14 @@ public class RoomGen : MonoBehaviour
         var allAssetPaths = AssetDatabase.GetAllAssetPaths()
              .Where(s => s.EndsWith("fbx", System.StringComparison.Ordinal));
         // RoomGenUtils.DebugArray(allAssetGuids);
-        return allAssetPaths; items.OrderBy(x => Random.value).First();
+        return allAssetPaths; // items.OrderBy(x => Random.value).First();
     }
 
 
     void CaptureScreenShot(string outputName)
     {
         RenderTexture rt = new RenderTexture(ResWidth, ResHeight, 24);
-        Camera cam = GetComponent<Camera>();
+        Camera cam = m_MainCamera;
         cam.targetTexture = rt;
         Texture2D screenShot = new Texture2D(ResWidth, ResHeight, TextureFormat.RGB24, false);
         cam.Render();
@@ -54,17 +56,28 @@ public class RoomGen : MonoBehaviour
         cam.targetTexture = null;
         RenderTexture.active = null; // JC: added to avoid errors
         Destroy(rt);
-        byte[] bytes = screenShot.EncodeToPNG();
+        byte[] bytes = screenShot.EncodeToJPG();
 
         System.IO.File.WriteAllBytes(outputName, bytes);
         Debug.Log(string.Format("Took screenshot to: {0}", outputName));
     }
 
-    string GetFurnAssetPathByCategory(string category, int randomSeed = 42)
+    string GetFurnAssetPath(string category, string item)
+    {
+        var items = RoomGenConfig.ItemsByCategory[category];
+        return allFurns.First(f => f.EndsWith(string.Format("{0}.fbx", item), System.StringComparison.Ordinal));
+    }
+    string GetRandomFurnAssetPathByCategory(string category, int randomSeed = 42)
     {
         var items = RoomGenConfig.ItemsByCategory[category];
         var item = items.OrderBy(x => Random.value).First();
-        return allFurns.Where(f => f.EndsWith(string.Format("{0}.fbx", item), System.StringComparison.Ordinal)).First();
+        return allFurns.First(f => f.EndsWith(string.Format("{0}.fbx", item), System.StringComparison.Ordinal));
+    }
+    Vector3 GetMeshSize(string path)
+    {
+        var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        var size = asset.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+        return size;
     }
 
     GameObject PlaceItem(string assetPath, Vector3 position)
@@ -88,20 +101,74 @@ public class RoomGen : MonoBehaviour
     }
     GameObject PlaceFloor()
     {
-        var floor = GetFurnAssetPathByCategory("floor");
-        var obj = PlaceItem(floor, Vector3.zero);
-        return obj;
+        var floorPath = GetRandomFurnAssetPathByCategory("floor");
+        var floors = new List<GameObject>();
+        var fSize = GetMeshSize(floorPath);
+        Debug.Log(string.Format("Single Floor Size {0},{1}", fSize.x, fSize.z));
+
+        // place floor boards
+        for (int i = 0; i < FloorPlan; i++)
+        {
+            var offsetX = (-fSize.x * FloorPlan / 2 + fSize.x / 2) + i * fSize.x;
+            for (int j = 0; j < FloorPlan; j++)
+            {
+                var offsetZ = (-fSize.z * FloorPlan / 2 + fSize.z / 2) + j * fSize.z;
+                floors.Add(
+                    PlaceItem(floorPath, new Vector3(offsetX, 0, offsetZ))
+                );
+            }
+        }
+
+        CombineInstance[] combine = new CombineInstance[floors.Count()];
+        for (int i = 0; i < floors.Count(); i++)
+        {
+            var m = floors[i].GetComponent<MeshFilter>();
+            combine[i].mesh = m.sharedMesh;
+            combine[i].transform = m.transform.localToWorldMatrix;
+            floors[i].gameObject.SetActive(false);
+        }
+
+        var combinedFloor = new GameObject();
+        combinedFloor.transform.position = Vector3.zero;
+
+        combinedFloor.AddComponent<MeshFilter>();
+        combinedFloor.AddComponent<MeshRenderer>();
+
+        // a hack really...
+        combinedFloor.GetComponent<MeshRenderer>().material = new Material(floors[0].GetComponent<MeshRenderer>().material);
+        combinedFloor.GetComponent<MeshFilter>().mesh = new Mesh();
+        combinedFloor.GetComponent<MeshFilter>().mesh.CombineMeshes(combine);
+        combinedFloor.gameObject.SetActive(true);
+
+        //var combinedSize = combinedFloor.GetComponent<MeshFilter>().mesh.bounds.size;
+        //combinedFloor.transform.position = new Vector3();
+        objs.Add(combinedFloor);
+        return combinedFloor;
     }
     List<GameObject> PlaceWall(GameObject floor)
     {
-        var size = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
-        var wallPath = GetFurnAssetPathByCategory("wall");
+        var floorSize = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+        var wallPath = GetRandomFurnAssetPathByCategory("wall");
+        var wallSize = GetMeshSize(wallPath);
+        var walls = new List<GameObject>();
 
-        // place item around the floor
-        PlaceItem(wallPath, new Vector3(0, 0, size.z / 2));
-        PlaceItem(wallPath, new Vector3(size.x / 2, 0, 0), Vector3.up, 90);
-        PlaceItem(wallPath, new Vector3(-size.x / 2, 0, 0), Vector3.up, -90);
-        return new List<GameObject> { };
+        // 3 sections of wall to place
+        // back
+        for (int i = 0; i < (int)(floorSize.x / wallSize.x); i++)
+        {
+            var x = (-floorSize.x / 2 + wallSize.x / 2) + (i) * wallSize.x;
+            walls.Add(PlaceItem(wallPath, new Vector3(x, 0, floorSize.z / 2)));
+        }
+
+        // left & right
+        for (int i = 0; i < (int)(floorSize.z / wallSize.x); i++)
+        {
+            var z = (-floorSize.z / 2 + wallSize.x / 2) + (i) * wallSize.x;
+            walls.Add(PlaceItem(wallPath, new Vector3(floorSize.x / 2, 0, z), Vector3.up, 90));
+            walls.Add(PlaceItem(wallPath, new Vector3(-floorSize.x / 2, 0, z), Vector3.up, -90));
+        }
+
+        return walls;
     }
     void PlaceStair()
     {
@@ -112,10 +179,35 @@ public class RoomGen : MonoBehaviour
 
     }
 
-    Vector2 NextRoomGridCoord(Vector2 roomSize)
+    Vector2 NextRoomGridCoord()
     {
+        for (int i = 0; i < 3; i++)
+        {
+            int x = (int)(Random.value * GridN);
+            int z = (int)(Random.value * GridN);
 
+            Vector2 pos = new Vector2(x, z);
+            if (grid.Count() >= GridN * GridN)
+            {
+                throw new System.Exception("BAD BAD");
+            }
+            if (!grid.Contains(pos))
+            {
+                grid.Add(pos);
+                return pos;
+            }
+        }
+
+        throw new System.Exception("BAD");
     }
+    Vector3 Grid2WorldCoord(Vector3 roomSize, Vector2 gridCoord)
+    {
+        var x = roomSize.x * (gridCoord.x / (1f * GridN)) - roomSize.x / 2;
+        // NOTE - gridCoord.y is is intentional
+        var z = roomSize.z * (gridCoord.y / (1f * GridN)) - roomSize.z / 2;
+        return new Vector3(x, 0, z);
+    }
+
     void Generate(string roomType)
     {
         // Clear everything
@@ -125,6 +217,8 @@ public class RoomGen : MonoBehaviour
         }
         // Clear the array
         objs.Clear();
+        // clear grid
+        grid.Clear();
 
         // build up our generator_config
         generatorConfig = roomType;
@@ -139,15 +233,18 @@ public class RoomGen : MonoBehaviour
         if (roomType == "bedroom")
         {
             var roomSize = floor.GetComponent<MeshFilter>().sharedMesh.bounds.size;
+
             var categories = RoomGenConfig.Room2Category[roomType];
             var itemCount = (int)(MaxItemCount / 2 + Random.Range(0, MaxItemCount / 2));
 
             for (int i = 0; i < itemCount; i++)
             {
                 var category = categories.OrderBy(x => Random.value).First();
-                var itemPath = RoomGenConfig.ItemsByCategory[category].OrderBy(x => Random.value).First();
-                
-                PlaceItem(itemPath, )
+                var item = RoomGenConfig.ItemsByCategory[category].OrderBy(x => Random.value).First();
+                var itemPath = GetFurnAssetPath(category, item);
+                var gridPos = NextRoomGridCoord();
+
+                PlaceItem(itemPath, Grid2WorldCoord(roomSize, gridPos));
             }
         }
         else
@@ -162,6 +259,8 @@ public class RoomGen : MonoBehaviour
         m_MainCamera = Camera.main;
         allFurns = GetAllFurnitures();
         objs = new List<GameObject>();
+        grid = new HashSet<Vector2>();
+
         Generate(RoomType);
     }
 
